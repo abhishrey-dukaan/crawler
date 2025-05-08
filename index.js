@@ -21,10 +21,17 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Validate URL middleware
 const validateUrl = (req, res, next) => {
-  const { url } = req.query;
+  let { url } = req.query;
   if (!url) {
     return res.status(400).json({ error: "URL parameter is required" });
   }
+
+  // Format URL if protocol is missing
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
+    req.query.url = url; // Update the request query with formatted URL
+  }
+
   try {
     new URL(url);
     next();
