@@ -40,24 +40,50 @@ const validateUrl = (req, res, next) => {
   }
 };
 
+const launchBrowser = async () => {
+  const maxRetries = 3;
+  let retryCount = 0;
+
+  while (retryCount < maxRetries) {
+    try {
+      return await puppeteer.launch({
+        headless: "new",
+        timeout: 60000, // Increase timeout to 60 seconds
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--disable-gpu",
+          "--window-size=1920,1080",
+          "--disable-web-security",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--no-zygote",
+          "--single-process",
+          "--no-first-run",
+        ],
+        defaultViewport: VIEWPORT,
+        pipe: true, // Use pipe instead of WebSocket
+      });
+    } catch (error) {
+      retryCount++;
+      logger.error(
+        `Browser launch attempt ${retryCount} failed: ${error.message}`
+      );
+      if (retryCount === maxRetries) throw error;
+      await delay(1000 * retryCount); // Exponential backoff
+    }
+  }
+};
+
 // Screenshot endpoint
 app.get("/screenshot", validateUrl, async (req, res) => {
   const { url } = req.query;
   logger.info(`Screenshot request received for URL: ${url}`);
+  let browser;
 
   try {
-    const browser = await puppeteer.launch({
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--disable-gpu",
-        "--window-size=1920,1080",
-      ],
-      defaultViewport: VIEWPORT,
-    });
+    browser = await launchBrowser();
 
     const page = await browser.newPage();
 
@@ -168,20 +194,10 @@ app.get("/screenshot", validateUrl, async (req, res) => {
 app.get("/scrape", validateUrl, async (req, res) => {
   const { url } = req.query;
   logger.info(`Scrape request received for URL: ${url}`);
+  let browser;
 
   try {
-    const browser = await puppeteer.launch({
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--disable-gpu",
-        "--window-size=1920,1080",
-      ],
-      defaultViewport: VIEWPORT,
-    });
+    browser = await launchBrowser();
 
     const page = await browser.newPage();
 
