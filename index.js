@@ -296,12 +296,22 @@ app.get("/scrape", validateUrl, async (req, res) => {
         };
 
         // Get all links, including those added by React
-        const links = Array.from(document.querySelectorAll("a")).map((a) => {
-          return {
-            href: a.href,
-            text: safeTextContent(a),
-          };
-        });
+        const links = Array.from(document.querySelectorAll("a")).map((a) =>
+          safeTextContent(a)
+        );
+
+        // Get all images
+        const images = Array.from(document.querySelectorAll("img")).map(
+          (img) => {
+            return {
+              src: img.src,
+              alt: img.alt || "",
+              title: img.title || "",
+              width: img.width || null,
+              height: img.height || null,
+            };
+          }
+        );
 
         // Get meta tags
         const metaTags = {
@@ -324,6 +334,7 @@ app.get("/scrape", validateUrl, async (req, res) => {
         return {
           headings,
           links,
+          images,
           metaTags,
           mainContent,
         };
