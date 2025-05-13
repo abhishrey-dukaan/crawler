@@ -8,6 +8,20 @@ import FormData from "form-data";
 const app = express();
 const port = 4001;
 
+// Enable keep-alive and set timeouts
+app.use((req, res, next) => {
+  res.set("Connection", "keep-alive");
+  res.set("Keep-Alive", "timeout=120");
+  next();
+});
+
+// Increase server timeout
+app.use((req, res, next) => {
+  req.setTimeout(300000); // 5 minutes
+  res.setTimeout(300000); // 5 minutes
+  next();
+});
+
 // Constants
 const DMS_UPLOAD_URL = "https://dms.mydukaan.io/api/media/upload/";
 const VIEWPORT = {
@@ -48,7 +62,7 @@ const launchBrowser = async () => {
     try {
       return await puppeteer.launch({
         headless: "new",
-        timeout: 60000, // Increase timeout to 60 seconds
+        timeout: 120000, // Increase timeout to 120 seconds
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -61,9 +75,21 @@ const launchBrowser = async () => {
           "--no-zygote",
           "--single-process",
           "--no-first-run",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--disable-gpu",
+          "--window-size=1920,1080",
+          "--disable-web-security",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--no-zygote",
+          "--single-process",
+          "--no-first-run",
+          "--disable-infobars",
+          "--disable-notifications",
         ],
         defaultViewport: VIEWPORT,
-        pipe: true, // Use pipe instead of WebSocket
+        pipe: true,
       });
     } catch (error) {
       retryCount++;
@@ -195,15 +221,24 @@ app.get("/scrape", validateUrl, async (req, res) => {
   const { url } = req.query;
   logger.info(`Scrape request received for URL: ${url}`);
   let browser;
+  let page;
 
   try {
     browser = await launchBrowser();
-
-    const page = await browser.newPage();
+    page = await browser.newPage();
 
     // Set longer default timeout
-    page.setDefaultTimeout(60000);
-    page.setDefaultNavigationTimeout(60000);
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
+
+    // Handle page errors
+    page.on("error", (err) => {
+      logger.error(`Page error: ${err.message}`);
+    });
+
+    page.on("pageerror", (err) => {
+      logger.error(`Page error: ${err.message}`);
+    });
 
     // Block unnecessary resources to speed up loading
     await page.setRequestInterception(true);
@@ -354,15 +389,49 @@ app.get("/scrape", validateUrl, async (req, res) => {
   } catch (error) {
     logger.error(`Error scraping URL ${url}: ${error.message}`);
     res.status(500).json({ error: error.message });
+  } finally {
+    if (page) {
+      try {
+        await page.close();
+      } catch (err) {
+        logger.error(`Error closing page: ${err.message}`);
+      }
+    }
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (err) {
+        logger.error(`Error closing browser: ${err.message}`);
+      }
+    }
   }
 });
 
-// Error handling middleware
+// Error handling middleware with detailed logging
 app.use((err, req, res, next) => {
   logger.error(`Unhandled error: ${err.message}`);
-  res.status(500).json({ error: "Internal server error" });
+  logger.error(`Stack trace: ${err.stack}`);
+  res.status(500).json({
+    error: "Internal server error",
+    message: err.message,
+    path: req.path,
+    method: req.method,
+  });
 });
 
-app.listen(port, () => {
+// Graceful shutdown handling
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM signal received: closing HTTP server");
+  server.close(() => {
+    logger.info("HTTP server closed");
+    process.exit(0);
+  });
+});
+
+const server = app.listen(port, () => {
   logger.info(`Server running at http://localhost:${port}`);
 });
+
+// Set server timeouts
+server.keepAliveTimeout = 120000; // 2 minutes
+server.headersTimeout = 120000; // 2 minutes
