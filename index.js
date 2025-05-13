@@ -6,7 +6,7 @@ import logger from "./utils/logger.js";
 import FormData from "form-data";
 
 const app = express();
-const port = 3000;
+const port = 4001;
 
 // Constants
 const DMS_UPLOAD_URL = "https://dms.mydukaan.io/api/media/upload/";
