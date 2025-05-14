@@ -62,7 +62,9 @@ const launchBrowser = async () => {
     try {
       return await puppeteer.launch({
         headless: "new",
-        timeout: 120000, // Increase timeout to 120 seconds
+        timeout: 120000,
+        pipe: false,
+        dumpio: true,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -75,21 +77,16 @@ const launchBrowser = async () => {
           "--no-zygote",
           "--single-process",
           "--no-first-run",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--disable-gpu",
-          "--window-size=1920,1080",
-          "--disable-web-security",
-          "--disable-features=IsolateOrigins,site-per-process",
-          "--no-zygote",
-          "--single-process",
-          "--no-first-run",
           "--disable-infobars",
           "--disable-notifications",
+          "--disable-extensions",
+          "--disable-sync",
+          "--no-default-browser-check",
+          "--ignore-certificate-errors",
+          "--ignore-certificate-errors-spki-list",
+          "--force-color-profile=srgb",
         ],
         defaultViewport: VIEWPORT,
-        pipe: true,
       });
     } catch (error) {
       retryCount++;
@@ -97,7 +94,7 @@ const launchBrowser = async () => {
         `Browser launch attempt ${retryCount} failed: ${error.message}`
       );
       if (retryCount === maxRetries) throw error;
-      await delay(1000 * retryCount); // Exponential backoff
+      await delay(2000 * retryCount);
     }
   }
 };
@@ -223,22 +220,56 @@ app.get("/scrape", validateUrl, async (req, res) => {
   let browser;
   let page;
 
+  const cleanup = async () => {
+    try {
+      if (page) {
+        await page
+          .close()
+          .catch((err) => logger.error(`Error closing page: ${err.message}`));
+      }
+      if (browser) {
+        await browser
+          .close()
+          .catch((err) =>
+            logger.error(`Error closing browser: ${err.message}`)
+          );
+      }
+    } catch (err) {
+      logger.error(`Error during cleanup: ${err.message}`);
+    }
+  };
+
   try {
     browser = await launchBrowser();
     page = await browser.newPage();
 
-    // Set longer default timeout
-    page.setDefaultTimeout(120000);
-    page.setDefaultNavigationTimeout(120000);
-
-    // Handle page errors
+    // Set up error handlers before any navigation
     page.on("error", (err) => {
       logger.error(`Page error: ${err.message}`);
+      cleanup();
     });
 
     page.on("pageerror", (err) => {
       logger.error(`Page error: ${err.message}`);
     });
+
+    // Handle crashed targets
+    browser.on("targetcrashed", async (target) => {
+      logger.error("Target crashed:", target.url());
+      await cleanup();
+      throw new Error("Browser target crashed");
+    });
+
+    // Handle disconnected browser
+    browser.on("disconnected", async () => {
+      logger.error("Browser disconnected");
+      await cleanup();
+      throw new Error("Browser disconnected");
+    });
+
+    // Set longer default timeout
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
 
     // Block unnecessary resources to speed up loading
     await page.setRequestInterception(true);
@@ -388,22 +419,12 @@ app.get("/scrape", validateUrl, async (req, res) => {
     logger.info(`Scraping completed successfully for URL: ${url}`);
   } catch (error) {
     logger.error(`Error scraping URL ${url}: ${error.message}`);
-    res.status(500).json({ error: error.message });
-  } finally {
-    if (page) {
-      try {
-        await page.close();
-      } catch (err) {
-        logger.error(`Error closing page: ${err.message}`);
-      }
-    }
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (err) {
-        logger.error(`Error closing browser: ${err.message}`);
-      }
-    }
+    await cleanup();
+    res.status(500).json({
+      error: error.message,
+      code: error.code || "UNKNOWN_ERROR",
+      url: url,
+    });
   }
 });
 
